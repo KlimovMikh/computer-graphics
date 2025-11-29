@@ -1,411 +1,313 @@
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
-from PIL import Image, ImageTk
-import numpy as np
-import cv2
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from matplotlib.figure import Figure
+from tkinter import ttk
+import time
+import math
 
-
-class ImageProcessingApp:
+class RasterApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Лабораторная работа 2 - Обработка изображений")
-        self.root.geometry("1400x900")
+        self.root.title("Лабораторная работа №3: Растровые алгоритмы")
+        self.root.geometry("1100x700")
+
+        self.pixel_size = 20 
+        self.canvas_width = 700
+        self.canvas_height = 660
+        self.center_x = self.canvas_width // (2 * self.pixel_size)
+        self.center_y = self.canvas_height // (2 * self.pixel_size)
+
         
-        self.original_image = None
-        self.processed_image = None
-        self.current_image_display = None
+        self.canvas = tk.Canvas(root, width=self.canvas_width, height=self.canvas_height, bg="white")
+        self.canvas.pack(side=tk.LEFT, padx=10, pady=10)
+
+        control_frame = tk.Frame(root)
+        control_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        input_frame = tk.LabelFrame(control_frame, text="Координаты")
+        input_frame.pack(fill=tk.X, pady=5)
+
+        tk.Label(input_frame, text="X1 / Xc:").grid(row=0, column=0)
+        self.entry_x1 = tk.Entry(input_frame, width=5)
+        self.entry_x1.grid(row=0, column=1)
+        self.entry_x1.insert(0, "-5")
+
+        tk.Label(input_frame, text="Y1 / Yc:").grid(row=0, column=2)
+        self.entry_y1 = tk.Entry(input_frame, width=5)
+        self.entry_y1.grid(row=0, column=3)
+        self.entry_y1.insert(0, "-5")
+
+        tk.Label(input_frame, text="X2 / R:").grid(row=1, column=0)
+        self.entry_x2 = tk.Entry(input_frame, width=5)
+        self.entry_x2.grid(row=1, column=1)
+        self.entry_x2.insert(0, "10")
+
+        tk.Label(input_frame, text="Y2:").grid(row=1, column=2)
+        self.entry_y2 = tk.Entry(input_frame, width=5)
+        self.entry_y2.grid(row=1, column=3)
+        self.entry_y2.insert(0, "8")
         
-        self.setup_ui()
+        tk.Label(input_frame, text="(Для окружности используйте поле R)").grid(row=2, column=0, columnspan=4)
+
+        btn_frame = tk.LabelFrame(control_frame, text="Алгоритмы")
+        btn_frame.pack(fill=tk.X, pady=5)
+
+        tk.Button(btn_frame, text="Пошаговый", command=self.run_step_by_step).pack(fill=tk.X, pady=2)
+        tk.Button(btn_frame, text="ЦДА (DDA)", command=self.run_dda).pack(fill=tk.X, pady=2)
+        tk.Button(btn_frame, text="Брезенхем (Линия)", command=self.run_bresenham_line).pack(fill=tk.X, pady=2)
+        tk.Button(btn_frame, text="Брезенхем (Окружность)", command=self.run_bresenham_circle).pack(fill=tk.X, pady=2)
+        tk.Button(btn_frame, text="Очистить", command=self.clear_canvas).pack(fill=tk.X, pady=10)
+
+        log_frame = tk.LabelFrame(control_frame, text="Лог вычислений и Время")
+        log_frame.pack(fill=tk.BOTH, expand=True, pady=5)
         
-    def setup_ui(self):
-        main_frame = ttk.Frame(self.root, padding="10")
-        main_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N, tk.S))
+        self.log_text = tk.Text(log_frame, height=20, width=40, font=("Consolas", 9))
+        self.log_text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         
-        control_frame = ttk.LabelFrame(main_frame, text="Управление", padding="10")
-        control_frame.grid(row=0, column=0, sticky=(tk.W, tk.E, tk.N), padx=5, pady=5)
+        scrollbar = tk.Scrollbar(log_frame, command=self.log_text.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.log_text.config(yscrollcommand=scrollbar.set)
+
+        self.draw_grid()
+
+
+    def draw_grid(self):
+        self.canvas.delete("all")
+        w, h = self.canvas_width, self.canvas_height
+        ps = self.pixel_size
+
+        for x in range(0, w, ps):
+            self.canvas.create_line(x, 0, x, h, fill="#e0e0e0")
+        for y in range(0, h, ps):
+            self.canvas.create_line(0, y, w, y, fill="#e0e0e0")
+
+        cx_screen = self.center_x * ps
+        cy_screen = self.center_y * ps
         
-        ttk.Button(control_frame, text="Загрузить изображение", 
-                   command=self.load_image).grid(row=0, column=0, padx=5, pady=5)
+        self.canvas.create_line(0, cy_screen, w, cy_screen, fill="black", width=2, arrow=tk.LAST)
+        self.canvas.create_text(w-10, cy_screen+15, text="X")
         
-        ttk.Button(control_frame, text="Сохранить результат", 
-                   command=self.save_image).grid(row=0, column=1, padx=5, pady=5)
+        self.canvas.create_line(cx_screen, h, cx_screen, 0, fill="black", width=2, arrow=tk.LAST)
+        self.canvas.create_text(cx_screen+15, 10, text="Y")
+
+        for i in range(-20, 21, 5):
+            if i == 0: continue
+            sx = (self.center_x + i) * ps
+            if 0 <= sx <= w:
+                self.canvas.create_line(sx, cy_screen-3, sx, cy_screen+3, fill="black")
+                self.canvas.create_text(sx, cy_screen+15, text=str(i), font=("Arial", 8))
+            
+            sy = (self.center_y - i) * ps
+            if 0 <= sy <= h:
+                self.canvas.create_line(cx_screen-3, sy, cx_screen+3, sy, fill="black")
+                self.canvas.create_text(cx_screen-15, sy, text=str(i), font=("Arial", 8))
+
+    def plot_pixel(self, x, y, color="blue"):
         
-        ttk.Button(control_frame, text="Сбросить", 
-                   command=self.reset_image).grid(row=0, column=2, padx=5, pady=5)
-        
-        self.notebook = ttk.Notebook(main_frame)
-        self.notebook.grid(row=1, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
-        
-        self.setup_nonlinear_filters_tab()
-        
-        self.setup_histogram_tab()
-        
-        image_frame = ttk.Frame(main_frame)
-        image_frame.grid(row=2, column=0, sticky=(tk.W, tk.E, tk.N, tk.S), padx=5, pady=5)
-        
-        original_label = ttk.Label(image_frame, text="Оригинальное изображение")
-        original_label.grid(row=0, column=0, padx=5)
-        
-        self.original_canvas = tk.Canvas(image_frame, width=600, height=450, bg='gray')
-        self.original_canvas.grid(row=1, column=0, padx=5, pady=5)
-        
-        processed_label = ttk.Label(image_frame, text="Обработанное изображение")
-        processed_label.grid(row=0, column=1, padx=5)
-        
-        self.processed_canvas = tk.Canvas(image_frame, width=600, height=450, bg='gray')
-        self.processed_canvas.grid(row=1, column=1, padx=5, pady=5)
-        
-        self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(0, weight=1)
-        main_frame.columnconfigure(0, weight=1)
-        main_frame.rowconfigure(2, weight=1)
-        
-    def setup_nonlinear_filters_tab(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="Нелинейные фильтры")
-        
-        desc = ttk.Label(tab, text="Фильтры на основе порядковых статистик", 
-                        font=('Arial', 10, 'bold'))
-        desc.grid(row=0, column=0, columnspan=3, pady=10)
-        
-        ttk.Label(tab, text="Тип фильтра:").grid(row=1, column=0, padx=5, pady=5, sticky=tk.W)
-        self.filter_type = tk.StringVar(value="median")
-        
-        filter_options = [
-            ("Медианный фильтр", "median"),
-            ("Минимальный фильтр", "min"),
-            ("Максимальный фильтр", "max"),
-            ("Средний фильтр (mean)", "mean"),
-            ("Фильтр средней точки", "midpoint")
-        ]
-        
-        for i, (text, value) in enumerate(filter_options):
-            ttk.Radiobutton(tab, text=text, variable=self.filter_type, 
-                           value=value).grid(row=2+i, column=0, padx=20, pady=2, sticky=tk.W)
-        
-        ttk.Label(tab, text="Размер ядра:").grid(row=1, column=1, padx=5, pady=5, sticky=tk.W)
-        self.kernel_size = tk.IntVar(value=3)
-        
-        kernel_frame = ttk.Frame(tab)
-        kernel_frame.grid(row=2, column=1, padx=5, pady=5, sticky=tk.W)
-        
-        ttk.Radiobutton(kernel_frame, text="3x3", variable=self.kernel_size, 
-                       value=3).pack(anchor=tk.W)
-        ttk.Radiobutton(kernel_frame, text="5x5", variable=self.kernel_size, 
-                       value=5).pack(anchor=tk.W)
-        ttk.Radiobutton(kernel_frame, text="7x7", variable=self.kernel_size, 
-                       value=7).pack(anchor=tk.W)
-        
-        custom_frame = ttk.Frame(kernel_frame)
-        custom_frame.pack(anchor=tk.W, pady=5)
-        ttk.Label(custom_frame, text="Произвольный:").pack(side=tk.LEFT)
-        self.custom_kernel = ttk.Entry(custom_frame, width=5)
-        self.custom_kernel.pack(side=tk.LEFT, padx=5)
-        
-        ttk.Button(tab, text="Применить фильтр", 
-                  command=self.apply_nonlinear_filter).grid(row=7, column=0, 
-                                                            columnspan=2, pady=20)
-        
-        info_text = """
-        Порядковые статистики:
-        • Медианный - устраняет импульсный шум
-        • Минимальный - затемняет изображение
-        • Максимальный - осветляет изображение
-        • Средний - сглаживание
-        • Средней точки - (min+max)/2
-        """
-        info_label = ttk.Label(tab, text=info_text, justify=tk.LEFT, 
-                              background='lightyellow')
-        info_label.grid(row=8, column=0, columnspan=3, padx=10, pady=10, sticky=tk.W)
-        
-    def setup_histogram_tab(self):
-        tab = ttk.Frame(self.notebook)
-        self.notebook.add(tab, text="Гистограмма и контрастирование")
-        
-        desc = ttk.Label(tab, text="Методы повышения контраста", 
-                        font=('Arial', 10, 'bold'))
-        desc.grid(row=0, column=0, columnspan=2, pady=10)
-        
-        ttk.Label(tab, text="Метод обработки:").grid(row=1, column=0, padx=5, 
-                                                     pady=5, sticky=tk.W)
-        
-        self.contrast_method = tk.StringVar(value="linear")
-        
-        methods = [
-            ("Линейное контрастирование", "linear"),
-            ("Эквализация гистограммы (RGB)", "equalize_rgb"),
-            ("Эквализация гистограммы (HSV)", "equalize_hsv"),
-            ("Эквализация гистограммы (HLS)", "equalize_hls")
-        ]
-        
-        for i, (text, value) in enumerate(methods):
-            ttk.Radiobutton(tab, text=text, variable=self.contrast_method, 
-                           value=value).grid(row=2+i, column=0, padx=20, 
-                                            pady=2, sticky=tk.W)
-        
-        linear_frame = ttk.LabelFrame(tab, text="Параметры линейного контрастирования")
-        linear_frame.grid(row=1, column=1, rowspan=4, padx=10, pady=5, sticky=(tk.N, tk.W))
-        
-        ttk.Label(linear_frame, text="Минимум выхода:").grid(row=0, column=0, padx=5, pady=5)
-        self.linear_min = ttk.Scale(linear_frame, from_=0, to=255, orient=tk.HORIZONTAL)
-        self.linear_min.set(0)
-        self.linear_min.grid(row=0, column=1, padx=5, pady=5)
-        self.linear_min_label = ttk.Label(linear_frame, text="0")
-        self.linear_min_label.grid(row=0, column=2, padx=5)
-        self.linear_min.configure(command=lambda v: self.linear_min_label.configure(
-            text=f"{int(float(v))}"))
-        
-        ttk.Label(linear_frame, text="Максимум выхода:").grid(row=1, column=0, padx=5, pady=5)
-        self.linear_max = ttk.Scale(linear_frame, from_=0, to=255, orient=tk.HORIZONTAL)
-        self.linear_max.set(255)
-        self.linear_max.grid(row=1, column=1, padx=5, pady=5)
-        self.linear_max_label = ttk.Label(linear_frame, text="255")
-        self.linear_max_label.grid(row=1, column=2, padx=5)
-        self.linear_max.configure(command=lambda v: self.linear_max_label.configure(
-            text=f"{int(float(v))}"))
-        
-        ttk.Button(tab, text="Применить метод", 
-                  command=self.apply_histogram_method).grid(row=6, column=0, 
-                                                            pady=20, padx=5)
-        
-        ttk.Button(tab, text="Показать гистограммы", 
-                  command=self.show_histograms).grid(row=6, column=1, 
-                                                     pady=20, padx=5)
-        
-        info_text = """
-        Методы контрастирования:
-        • Линейное - растяжение диапазона яркости
-        • RGB - эквализация каждого канала отдельно
-        • HSV/HLS - эквализация только канала яркости
-        """
-        info_label = ttk.Label(tab, text=info_text, justify=tk.LEFT, 
-                              background='lightyellow')
-        info_label.grid(row=7, column=0, columnspan=2, padx=10, pady=10, sticky=tk.W)
-        
-    def load_image(self):
-        file_path = filedialog.askopenfilename(
-            title="Выберите изображение",
-            filetypes=[("Изображения", "*.png *.jpg *.jpeg *.bmp *.tiff"), 
-                      ("Все файлы", "*.*")]
+        screen_x = (self.center_x + x) * self.pixel_size
+        screen_y = (self.center_y - y) * self.pixel_size 
+
+        self.canvas.create_rectangle(
+            screen_x, screen_y,
+            screen_x + self.pixel_size, screen_y - self.pixel_size,
+            fill=color, outline="gray"
         )
-        
-        if file_path:
-            self.original_image = cv2.imread(file_path)
-            self.original_image = cv2.cvtColor(self.original_image, cv2.COLOR_BGR2RGB)
-            self.processed_image = self.original_image.copy()
-            
-            self.display_image(self.original_image, self.original_canvas)
-            self.display_image(self.processed_image, self.processed_canvas)
-            
-    def save_image(self):
-        if self.processed_image is None:
-            messagebox.showwarning("Предупреждение", "Нет обработанного изображения для сохранения")
-            return
-            
-        file_path = filedialog.asksaveasfilename(
-            defaultextension=".png",
-            filetypes=[("PNG", "*.png"), ("JPEG", "*.jpg"), ("Все файлы", "*.*")]
-        )
-        
-        if file_path:
-            image_to_save = cv2.cvtColor(self.processed_image, cv2.COLOR_RGB2BGR)
-            cv2.imwrite(file_path, image_to_save)
-            messagebox.showinfo("Успех", "Изображение сохранено")
-            
-    def reset_image(self):
-        if self.original_image is not None:
-            self.processed_image = self.original_image.copy()
-            self.display_image(self.processed_image, self.processed_canvas)
-            
-    def display_image(self, image, canvas):
-        height, width = image.shape[:2]
-        max_width, max_height = 600, 450
-        
-        scale = min(max_width/width, max_height/height)
-        new_width = int(width * scale)
-        new_height = int(height * scale)
-        
-        resized = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_AREA)
-        
-        image_pil = Image.fromarray(resized)
-        photo = ImageTk.PhotoImage(image_pil)
-        
-        canvas.delete("all")
-        canvas.create_image(max_width//2, max_height//2, image=photo, anchor=tk.CENTER)
-        canvas.image = photo
-        
-    
-    def apply_nonlinear_filter(self):
-        if self.original_image is None:
-            messagebox.showwarning("Предупреждение", "Сначала загрузите изображение")
-            return
-        
-        if self.custom_kernel.get():
+        # self.canvas.create_oval(screen_x+8, screen_y-8, screen_x+12, screen_y-12, fill="white")
+
+    def clear_canvas(self):
+        self.draw_grid()
+        self.log_text.delete(1.0, tk.END)
+
+    def log(self, message):
+        self.log_text.insert(tk.END, message + "\n")
+        self.log_text.see(tk.END)
+
+    def get_coords(self):
+        try:
+            x1 = int(self.entry_x1.get())
+            y1 = int(self.entry_y1.get())
+            x2 = int(self.entry_x2.get())
             try:
-                ksize = int(self.custom_kernel.get())
-                if ksize < 3 or ksize % 2 == 0:
-                    messagebox.showerror("Ошибка", "Размер ядра должен быть нечетным и >= 3")
-                    return
+                y2 = int(self.entry_y2.get())
             except ValueError:
-                messagebox.showerror("Ошибка", "Неверный размер ядра")
-                return
-        else:
-            ksize = self.kernel_size.get()
+                y2 = 0
+            return x1, y1, x2, y2
+        except ValueError:
+            self.log("Ошибка: Введите целые числа!")
+            return None
+
+    def run_step_by_step(self):
+        coords = self.get_coords()
+        if not coords: return
+        x1, y1, x2, y2 = coords
         
-        filter_type = self.filter_type.get()
+        self.clear_canvas()
+        self.log(f"--- Пошаговый алгоритм: ({x1},{y1}) -> ({x2},{y2}) ---")
         
-        if filter_type == "median":
-            self.processed_image = self.median_filter(self.original_image, ksize)
-        elif filter_type == "min":
-            self.processed_image = self.min_filter(self.original_image, ksize)
-        elif filter_type == "max":
-            self.processed_image = self.max_filter(self.original_image, ksize)
-        elif filter_type == "mean":
-            self.processed_image = self.mean_filter(self.original_image, ksize)
-        elif filter_type == "midpoint":
-            self.processed_image = self.midpoint_filter(self.original_image, ksize)
+        start_time = time.perf_counter_ns()
         
-        self.display_image(self.processed_image, self.processed_canvas)
-        
-    def median_filter(self, image, ksize):
-        return cv2.medianBlur(image, ksize)
-    
-    def min_filter(self, image, ksize):
-        kernel = np.ones((ksize, ksize), np.uint8)
-        return cv2.erode(image, kernel)
-    
-    def max_filter(self, image, ksize):
-        kernel = np.ones((ksize, ksize), np.uint8)
-        return cv2.dilate(image, kernel)
-    
-    def mean_filter(self, image, ksize):
-        return cv2.blur(image, (ksize, ksize))
-    
-    def midpoint_filter(self, image, ksize):
-        min_filtered = self.min_filter(image, ksize)
-        max_filtered = self.max_filter(image, ksize)
-        return ((min_filtered.astype(np.float32) + max_filtered.astype(np.float32)) / 2).astype(np.uint8)
-    
-    
-    def apply_histogram_method(self):
-        if self.original_image is None:
-            messagebox.showwarning("Предупреждение", "Сначала загрузите изображение")
+        if x1 == x2 and y1 == y2:
+            self.plot_pixel(x1, y1)
             return
+
+        dx = x2 - x1
+        dy = y2 - y1
         
-        method = self.contrast_method.get()
+        steps = max(abs(dx), abs(dy))
+
+        self.log(f"dx={dx}, dy={dy}, steps={steps}")
         
-        if method == "linear":
-            min_out = int(self.linear_min.get())
-            max_out = int(self.linear_max.get())
+        if abs(dx) >= abs(dy):
+            k = dy / dx if dx != 0 else 0
+            b = y1 - k * x1
+            self.log(f"Ось X ведущая. k={k:.2f}, b={b:.2f}")
             
-            if min_out >= max_out:
-                messagebox.showerror("Ошибка", "Минимум должен быть меньше максимума")
-                return
-                
-            self.processed_image = self.linear_contrast(self.original_image, min_out, max_out)
+            step = 1 if x2 > x1 else -1
+            for x in range(x1, x2 + step, step):
+                y = k * x + b
+                y_round = round(y)
+                self.plot_pixel(x, y_round, "red")
+                self.log(f"x={x}, y={y:.2f} -> round({y_round})")
+        else: 
+            k = dx / dy
+            b = x1 - k * y1
+            self.log(f"Ось Y ведущая. 1/k={k:.2f}")
             
-        elif method == "equalize_rgb":
-            self.processed_image = self.equalize_histogram_rgb(self.original_image)
-            
-        elif method == "equalize_hsv":
-            self.processed_image = self.equalize_histogram_hsv(self.original_image)
-            
-        elif method == "equalize_hls":
-            self.processed_image = self.equalize_histogram_hls(self.original_image)
+            step = 1 if y2 > y1 else -1
+            for y in range(y1, y2 + step, step):
+                x = k * y + b
+                x_round = round(x)
+                self.plot_pixel(x_round, y, "red")
+                self.log(f"y={y}, x={x:.2f} -> round({x_round})")
+
+        end_time = time.perf_counter_ns()
+        self.log(f"Время выполнения: {(end_time - start_time) / 1000:.2f} мкс")
+
+    def run_dda(self):
+        coords = self.get_coords()
+        if not coords: return
+        x1, y1, x2, y2 = coords
+
+        self.clear_canvas()
+        self.log(f"--- Алгоритм ЦДА: ({x1},{y1}) -> ({x2},{y2}) ---")
         
-        self.display_image(self.processed_image, self.processed_canvas)
+        start_time = time.perf_counter_ns()
+
+        dx = x2 - x1
+        dy = y2 - y1
         
-    def linear_contrast(self, image, min_out=0, max_out=255):
-        """Линейное контрастирование"""
-        result = np.zeros_like(image, dtype=np.float32)
+        length = max(abs(dx), abs(dy))
         
-        for i in range(3): 
-            channel = image[:, :, i].astype(np.float32)
-            min_in = np.min(channel)
-            max_in = np.max(channel)
+        if length == 0:
+            self.plot_pixel(x1, y1, "green")
+            return
+
+        dx_step = dx / length
+        dy_step = dy / length
+        
+        self.log(f"Length={length}, dx_step={dx_step:.2f}, dy_step={dy_step:.2f}")
+
+        x = x1
+        y = y1
+        
+        for i in range(length + 1):
+            self.plot_pixel(round(x), round(y), "green")
+            if i < 3 or i > length - 3:
+                self.log(f"i={i}: x={x:.2f}, y={y:.2f} -> ({round(x)}, {round(y)})")
             
-            if max_in > min_in:
-                result[:, :, i] = (channel - min_in) * (max_out - min_out) / (max_in - min_in) + min_out
+            x += dx_step
+            y += dy_step
+
+        end_time = time.perf_counter_ns()
+        self.log(f"Время выполнения: {(end_time - start_time) / 1000:.2f} мкс")
+
+    def run_bresenham_line(self):
+        coords = self.get_coords()
+        if not coords: return
+        x1, y1, x2, y2 = coords
+
+        self.clear_canvas()
+        self.log(f"--- Брезенхем (Линия): ({x1},{y1}) -> ({x2},{y2}) ---")
+        
+        start_time = time.perf_counter_ns()
+
+        dx = abs(x2 - x1)
+        dy = abs(y2 - y1)
+        
+        sx = 1 if x1 < x2 else -1
+        sy = 1 if y1 < y2 else -1
+        
+        err = dx - dy
+        
+        x, y = x1, y1
+        
+        self.log(f"Init: dx={dx}, dy={dy}, sx={sx}, sy={sy}, err={err}")
+
+        while True:
+            self.plot_pixel(x, y, "blue")
+            if x == x2 and y == y2:
+                break
+            
+            e2 = 2 * err
+            prev_err = err 
+            
+            if e2 > -dy:
+                err -= dy
+                x += sx
+            
+            if e2 < dx:
+                err += dx
+                y += sy
+            
+            if dx < 20 or (x - x1) % 5 == 0:
+                 self.log(f"P({x},{y}), err_was={prev_err}, new_err={err}")
+
+        end_time = time.perf_counter_ns()
+        self.log(f"Время выполнения: {(end_time - start_time) / 1000:.2f} мкс")
+
+    def run_bresenham_circle(self):
+        try:
+            xc = int(self.entry_x1.get())
+            yc = int(self.entry_y1.get())
+            r = int(self.entry_x2.get())
+        except ValueError:
+            self.log("Ошибка: Для окружности нужны Xc, Yc и R (в поле X2)")
+            return
+
+        self.clear_canvas()
+        self.log(f"--- Брезенхем (Окружность): Центр({xc},{yc}), R={r} ---")
+        
+        start_time = time.perf_counter_ns()
+
+        x = 0
+        y = r
+        d = 3 - 2 * r
+        
+        self.log(f"Init: x={x}, y={y}, d={d}")
+
+        def plot_circle_points(xc, yc, x, y):
+            points = [
+                (xc+x, yc+y), (xc-x, yc+y), (xc+x, yc-y), (xc-x, yc-y),
+                (xc+y, yc+x), (xc-y, yc+x), (xc+y, yc-x), (xc-y, yc-x)
+            ]
+            for px, py in points:
+                self.plot_pixel(px, py, "purple")
+
+        plot_circle_points(xc, yc, x, y)
+
+        while y >= x:
+            x += 1
+            if d > 0:
+                y -= 1
+                d = d + 4 * (x - y) + 10
             else:
-                result[:, :, i] = channel
-        
-        return np.clip(result, 0, 255).astype(np.uint8)
-    
-    def equalize_histogram_rgb(self, image):
-        result = np.zeros_like(image)
-        
-        for i in range(3):
-            result[:, :, i] = cv2.equalizeHist(image[:, :, i])
-        
-        return result
-    
-    def equalize_histogram_hsv(self, image):
-        hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
-        hsv[:, :, 2] = cv2.equalizeHist(hsv[:, :, 2])
-        return cv2.cvtColor(hsv, cv2.COLOR_HSV2RGB)
-    
-    def equalize_histogram_hls(self, image):
-        hls = cv2.cvtColor(image, cv2.COLOR_RGB2HLS)
-        hls[:, :, 1] = cv2.equalizeHist(hls[:, :, 1])
-        return cv2.cvtColor(hls, cv2.COLOR_HLS2RGB)
-    
-    def show_histograms(self):
-        if self.original_image is None:
-            messagebox.showwarning("Предупреждение", "Сначала загрузите изображение")
-            return
-        
-        fig = Figure(figsize=(12, 8))
-        
-        ax1 = fig.add_subplot(2, 2, 1)
-        self.plot_histogram(self.original_image, ax1, "Оригинальное изображение")
-        
-        if self.processed_image is not None:
-            ax2 = fig.add_subplot(2, 2, 2)
-            self.plot_histogram(self.processed_image, ax2, "Обработанное изображение")
-        
-        if self.processed_image is not None:
-            ax3 = fig.add_subplot(2, 1, 2)
-            colors = ('r', 'g', 'b')
-            for i, color in enumerate(colors):
-                hist_orig = cv2.calcHist([self.original_image], [i], None, [256], [0, 256])
-                hist_proc = cv2.calcHist([self.processed_image], [i], None, [256], [0, 256])
-                ax3.plot(hist_orig, color=color, alpha=0.5, linestyle='--', label=f'{color.upper()} (ориг.)')
-                ax3.plot(hist_proc, color=color, alpha=0.7, label=f'{color.upper()} (обраб.)')
-            ax3.set_title("Сравнение гистограмм")
-            ax3.set_xlabel("Значение яркости")
-            ax3.set_ylabel("Количество пикселей")
-            ax3.legend()
-            ax3.grid(True, alpha=0.3)
-        
-        hist_window = tk.Toplevel(self.root)
-        hist_window.title("Гистограммы изображений")
-        hist_window.geometry("1200x800")
-        
-        canvas = FigureCanvasTkAgg(fig, master=hist_window)
-        canvas.draw()
-        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True)
-        
-    def plot_histogram(self, image, ax, title):
-        colors = ('r', 'g', 'b')
-        for i, color in enumerate(colors):
-            hist = cv2.calcHist([image], [i], None, [256], [0, 256])
-            ax.plot(hist, color=color, label=f'{color.upper()} канал')
-        
-        ax.set_title(title)
-        ax.set_xlabel("Значение яркости")
-        ax.set_ylabel("Количество пикселей")
-        ax.legend()
-        ax.grid(True, alpha=0.3)
+                d = d + 4 * x + 6
+            
+            plot_circle_points(xc, yc, x, y)
+            self.log(f"Step: x={x}, y={y}, d={d}")
 
-
-def main():
-    root = tk.Tk()
-    app = ImageProcessingApp(root)
-    root.mainloop()
-
+        end_time = time.perf_counter_ns()
+        self.log(f"Время выполнения: {(end_time - start_time) / 1000:.2f} мкс")
 
 if __name__ == "__main__":
-    main()
+    root = tk.Tk()
+    app = RasterApp(root)
+    root.mainloop()
